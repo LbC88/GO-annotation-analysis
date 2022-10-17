@@ -1,0 +1,410 @@
+use warnings;
+use strict;
+use Excel::Writer::XLSX;
+
+my $pepg = '';
+my $infof = '';
+
+foreach (@ARGV){
+	$pepg = $_ if index($_ , '.txt') >= 0;
+	$infof = $_ if index($_ , '.tsv') >= 0;
+}
+
+die"no input file: pepgroup.txt!" if $pepg eq '';
+die"no input file: info.txt!" if $infof eq '';
+
+#=====================================================
+
+my %listhash;
+my $pepn = 0;
+my %pepthash;
+open PEPG,"<","$pepg";
+while(<PEPG>){
+	$pepn++;
+	chomp (my $pepL = $_);
+	my @pepLr = split"\t",$pepL;
+	if ($pepn == 1){
+		for (my $pi=0;$pi<=$#pepLr;$pi++){
+			$pepthash{$pepLr[$pi]} = $pi;
+		}
+	}else{
+		if ($pepLr[$pepthash{'Accession'}] =~ /; /){
+			my @protar = split"; ",$pepLr[$pepthash{'Accession'}];
+			map{$listhash{$_} = 1} @protar;
+		}else{
+			$listhash{$pepLr[$pepthash{'Accession'}]} = 1;
+		}
+	}
+}
+close PEPG;
+
+my $resultpath = 'GOannotation';
+unlink $resultpath if $resultpath && -f $resultpath;
+mkdir $resultpath;
+
+my $n;
+my %hhash;
+my $tmpf = $resultpath."/tmpfilep2g.txt";
+
+open TMP,">","$tmpf";
+open IN,"<","$infof";
+while(<IN>){
+	$n++;
+	chomp (my $Line = $_);
+	my @Lr = split"\t",$Line;
+	if ($n==1){
+		foreach (my $j=0;$j<=$#Lr;$j++){
+			$hhash{$Lr[$j]} = $j;
+		}
+		print TMP"$Line\n";
+	}else{
+		if (exists $Lr[$hhash{'Entry'}] && exists $listhash{$Lr[$hhash{'Entry'}]}){
+			$Line =~ s/"//g;
+			print TMP"$Line\n";
+		}
+	}
+}
+close IN;
+close TMP;
+
+#==========================================
+
+my $N;
+
+#my %hashinfo;
+my (%PN,%GN);  # Protein name & Gene name
+my %headhash;
+
+
+my %hashgo;
+my %hashgocc; # cellular component
+my %hashgomf; # molecular function
+my %hashgobp; # biological process
+
+my %hashccgo; # cellular component
+my %hashmfgo; # molecular function
+my %hashbpgo; # biological process
+
+my $indexcc;
+my $indexmf;
+my $indexbp;
+open IN,"<","$tmpf";
+while(<IN>){
+	$N++;
+	chomp (my $L = $_);
+	my @lr = split"\t",$L;
+	if ($N==1){
+		foreach (my $i=0;$i<=$#lr;$i++){
+			$headhash{$lr[$i]} = $i;
+			if ($lr[$i] eq "Gene Ontology (biological process)"){
+				$indexbp = $i;
+			}elsif($lr[$i] eq "Gene Ontology (cellular component)"){
+				$indexcc = $i;
+			}elsif($lr[$i] eq "Gene Ontology (molecular function)"){
+				$indexmf = $i;
+			}else{
+				next;
+			}
+		}
+	}else{
+		my (@mfarr,@ccarr,@bparr);
+		
+		if ($lr[$indexmf]){  #  && $lr[$indexmf] =~ /\[/
+			@mfarr = split"; ",$lr[$indexmf];
+			#map{print "$_\n" } @mfarr;
+			#print "C: @mfarr\n";
+			if (scalar @mfarr >= 2){
+				foreach (@mfarr){
+					if (/(.*) \[(GO:[0-9]*)\]/){
+						#print "A:$1\n$2\n";
+						$hashgomf{$lr[$headhash{'Entry'}]}{$2} = $1;  # add {'molecular_function'}
+						$hashmfgo{$2}{$lr[$headhash{'Entry'}]} = $1;
+						$hashgo{$2} = $1;
+					}
+				}
+			}else{
+				#map{print "$_\n" } @mfarr if scalar @mfarr >2;
+				if ($lr[$indexmf] =~ /(.*) \[(GO:[0-9]*)\]/){
+					$hashgomf{$lr[$headhash{'Entry'}]}{$2} = $1;
+					$hashmfgo{$2}{$lr[$headhash{'Entry'}]} = $1;
+					$hashgo{$2} = $1;
+				}
+			}
+		}
+		
+		if ($lr[$indexcc]){   # && $lr[$indexcc] =~ /\[/
+			@ccarr = split"; ",$lr[$indexcc];
+			if (scalar @ccarr >= 2){
+				foreach (@ccarr){
+					if (/(.*) \[(GO:[0-9]*)\]/){
+						$hashgocc{$lr[$headhash{'Entry'}]}{$2} = $1;
+						$hashccgo{$2}{$lr[$headhash{'Entry'}]} = $1;
+						$hashgo{$2} = $1;
+					}
+				}
+			}else{
+				if ($lr[$indexcc] =~ /(.*) \[(GO:[0-9]*)\]/){    #
+					$hashgocc{$lr[$headhash{'Entry'}]}{$2} = $1;
+					$hashccgo{$2}{$lr[$headhash{'Entry'}]} = $1;
+					$hashgo{$2} = $1;
+				}
+			}
+		}
+		
+		if ($lr[$indexbp]){    #&& $lr[$indexbp] =~ /\[/
+			@bparr = split"; ",$lr[$indexbp];
+			if (scalar @bparr >= 2){
+				foreach (@bparr){
+					if (/(.*) \[(GO:[0-9]*)\]/){
+						$hashgobp{$lr[$headhash{'Entry'}]}{$2} = $1;
+						$hashbpgo{$2}{$lr[$headhash{'Entry'}]} = $1;
+						$hashgo{$2} = $1;
+					}
+				}
+			}else{
+				if ($lr[$indexbp] =~ /(.*) \[(GO:[0-9]*)\]/){    ##
+					$hashgobp{$lr[$headhash{'Entry'}]}{$2} = $1;
+					$hashbpgo{$2}{$lr[$headhash{'Entry'}]} = $1;
+					$hashgo{$2} = $1;
+				}
+			}
+		}
+		
+		$PN{$lr[$headhash{'Entry'}]} = $lr[$headhash{'Protein names'}] if $lr[$headhash{'Protein names'}];
+		$GN{$lr[$headhash{'Entry'}]} = $lr[$headhash{'Gene Names'}] if $lr[$headhash{'Gene Names'}];
+	}
+}
+close IN;
+
+
+my $p2gout = $resultpath."/protein2go.txt";
+my $g2pout = $resultpath."/go2protein.txt";
+
+open OUT,">","$p2gout";   # Proteins to GO terms
+
+#Gene Ontology (biological process)	Gene Ontology (cellular component)	Gene Ontology (molecular function)
+
+print OUT"Entry\tProtein names\tGene Names\tGO molecular function\tGO cellular component\tGO biological process\n";
+foreach my $pn (keys %listhash){
+	print OUT"$pn\t";
+	if ($PN{$pn}){
+		print OUT"$PN{$pn}\t";
+	}else{
+		print OUT"-\t";
+	}
+	if ($GN{$pn}){
+		print OUT"$GN{$pn}\t";
+	}else{
+		print OUT"-\t";
+	}
+	
+	#my @goarr; # NOs of GO subclass
+	#my @goarrterm;
+	my (@tmpmf,@tmpcc,@tmpbp);
+	foreach (sort keys %{$hashgomf{$pn}}){   #$hashgomf
+		#print "$_\n";
+		push (@tmpmf,$_);
+	}
+	my $tmpmfstr = join"; ",@tmpmf;
+	print OUT"$tmpmfstr\t";
+	
+	foreach (sort keys %{$hashgocc{$pn}}){   #$hashgocc
+		#print "$_\n";
+		push (@tmpcc,$_);
+	}
+	my $tmpccstr = join"; ",@tmpcc;
+	print OUT"$tmpccstr\t";
+	
+	foreach (sort keys %{$hashgobp{$pn}}){   #$hashgobp
+		#print "$_\n";
+		push (@tmpbp,$_);
+	}
+	my $tmpbpstr = join"; ",@tmpbp;
+	print OUT"$tmpbpstr\t";
+	
+	print OUT"\n";
+}
+close OUT;
+
+
+open OUTG,">","$g2pout";  # GO terms to Proteins
+print OUTG"Ontology\tGO No.\tGO terms\tCount\tProteins\n";
+
+foreach my $m (sort keys %hashmfgo){
+	print OUTG"molecular_function\t$m\t$hashgo{$m}\t";
+	#print "$m\t$hashgo{$m}\n";
+	my @mparr;
+	foreach my $mp (sort keys %{$hashmfgo{$m}}){
+		push (@mparr,$mp);
+	}
+	my $mnum = scalar @mparr;
+	my $mstr = join";",@mparr;
+	print OUTG"$mnum\t$mstr\n";
+}
+
+foreach my $c (sort keys %hashccgo){
+	print OUTG"cellular_component\t$c\t$hashgo{$c}\t";
+	#print "$c\t$hashgo{$c}\n";
+	my @cparr;
+	foreach my $cp (sort keys %{$hashccgo{$c}}){
+		push (@cparr,$cp);
+	}
+	my $cnum = scalar @cparr;
+	my $cstr = join";",@cparr;
+	print OUTG"$cnum\t$cstr\n";
+}
+
+foreach my $b (sort keys %hashbpgo){
+	print OUTG"biological_process\t$b\t$hashgo{$b}\t";
+	#print "$b\t$hashgo{$b}\n";
+	my @bparr;
+	foreach my $bp (sort keys %{$hashbpgo{$b}}){
+		push (@bparr,$bp);
+	}
+	my $bnum = scalar @bparr;
+	my $bstr = join";",@bparr;
+	print OUTG"$bnum\t$bstr\n";
+}
+
+close OUTG;
+
+#=============================== output excel part =====================
+
+my %fonth=(
+	font=>"Times New Roman",
+	size=>11,
+	color=>"white",
+	align => 'center',
+	bg_color => '#366092',
+	valign => 'vcenter',
+	text_wrap => 1,
+	bold=>1,
+);
+
+my %font1=(
+	font=>"Times New Roman",
+	size=>11,
+	color=>"black",
+	align => 'left',
+	pattern => 0,
+);
+
+# my $p2gout = $resultpath."/protein2go.txt";
+# my $g2pout = $resultpath."/go2protein.txt";
+
+#my @txtarr = glob "location_Result/*";   # convert all 'txt' to 'xlsx' format
+
+my %excelheadHash;
+my %excelcontHash;
+my %hash4order;   # 1st key => Number of Line
+my @array4order;
+#my $bsn1 = basename($res);   # basename1 is stat.txt
+my $en=0;
+
+open BSN,"<","$g2pout";
+while(<BSN>){
+	$en++;
+	chomp;
+	my @n4arr = split"\t";
+	if ($en==1){
+		$excelheadHash{$en} = $_;
+	}else{
+		push (@array4order,$n4arr[3]) unless exists $hash4order{$n4arr[3]};
+		$hash4order{$n4arr[3]} = 1;
+		
+		$excelcontHash{$n4arr[3]}{$en} = $_;
+	}
+}
+close BSN;
+
+#my $outpath = "location_Result";
+my $excelsumf = $resultpath."/GOannotation_Result.xlsx";
+my $workbook = Excel::Writer::XLSX->new("$excelsumf");
+
+#=== file 1 -> sheet 1 =========
+#my $baseRes = basename($res);
+#$baseRes = $1 if $baseRes =~ /(.*)\.txt/;
+#print "$baseRes\n";
+my $worksheet = $workbook->add_worksheet('GO->protein');
+my $format_head = $workbook->add_format(%fonth); # Add a format
+my $format_cont = $workbook->add_format(%font1); # Add a format dark green
+#my $format_cont2 = $workbook->add_format(%font2); # Add a format light green
+
+$worksheet->freeze_panes(1, 1);
+#$worksheet->set_column('A:D', 10000);
+
+my $head = $excelheadHash{1};
+#print keys %headHash;
+#print "$headHash{$baseRes}";
+my @headarr = split"\t",$head;
+my $columNum = @headarr;
+$worksheet -> set_column(0,$columNum,15);
+$worksheet -> write_row(0,0,\@headarr,$format_head);   #  write header
+
+#=pod
+#print scalar @array4order;
+
+my $row = 0;
+my $naccN = 0;
+foreach my $nacc (sort{$b<=>$a } keys %hash4order){
+	$naccN++;
+	foreach my $nL (sort keys %{$excelcontHash{$nacc}}){
+		$row++;
+		my @out=split"\t",$excelcontHash{$nacc}{$nL};
+		for (my $o=0;$o<=$#out;$o++){
+			$worksheet -> write($row,$o,$out[$o],$format_cont);
+		}
+	}
+}
+
+#=pod
+#=== file 2 -> sheet 2 =========
+
+my $rn = 0;
+my %rankhhash;
+my %rankhash;
+open RAN,"<","$p2gout";
+while(<RAN>){
+	$rn++;
+	chomp;
+	my @rankarr = split"\t";
+	if ($rn==1){
+		$rankhhash{$rn} = $_;
+	}else{
+		#$rankhash{$rankarr[4]}{$rn} = $_;   # index 4 is 'number of sites'
+		$rankhash{$rn} = $_;
+	}
+}
+close RAN;
+
+
+my $worksheet2 = $workbook->add_worksheet('protein->GO');
+#my $format_head = $workbook->add_format(%fonth); # Add a format
+#my $format_cont = $workbook->add_format(%font1); # Add a format dark green
+
+$worksheet2->freeze_panes(1, 1);
+
+my $head2 = $rankhhash{1};
+
+my @headarr2 = split"\t",$head2;
+my $columNum2 = @headarr2;
+$worksheet2 -> set_column(0,$columNum2,15);
+$worksheet2 -> write_row(0,0,\@headarr2,$format_head);
+
+my $row2 = 0;
+foreach my $sc (sort{$b<=>$a} keys %rankhash){
+	#foreach my $nc (sort{$a<=>$b} keys %{$rankhash{$sc}}){
+	#$row2++;
+	my @contLarr = split"\t",$rankhash{$sc};
+	#my $
+	$worksheet2 -> set_column(0,$columNum2,15);
+	$worksheet2 -> write_row(++$row2,0,\@contLarr,$format_cont);
+	
+	#my @contarr = split"\t",$rankhash{$sc}{$nc};
+	#for (my $contn=0;$contn<=$#contarr;$contn++){
+	#	$worksheet2 -> write($row2,$contn,$contarr[$contn],$format_cont);
+	#}
+	#}
+}
+#=cut
+$workbook -> close();
